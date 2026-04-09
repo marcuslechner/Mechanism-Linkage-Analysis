@@ -52,6 +52,28 @@ python sixbar_sim.py mechanism.json --settings path/to/settings.json
 This reads `settings.json` by default for masses, payload, motor limits, and other run settings, then generates plots and displays them.
 The mechanism is converted to the configured output units even if the input `.motiongen` was authored in a different unit system.
 
+### Interactive viewer
+
+```bash
+# Interactive linkage + synced charts (slider, play/pause, speed)
+python sixbar_viewer.py mechanism.json
+
+# Works with .motiongen too, and still honors settings units conversion
+python sixbar_viewer.py path/to/mechanism.motiongen --settings settings.json
+```
+
+The viewer includes:
+
+- Absolute crank-angle slider (drag to inspect a configuration)
+- Linkage motion panel with coupler trail
+- Synchronized cursors across torque, joint-force, and coupler charts
+- Play/Pause and playback speed control
+
+If the viewer prints `Current backend: agg`, install a GUI backend first:
+
+- Ubuntu/Debian: `sudo apt install python3-tk` (TkAgg)
+- Or install Qt bindings in your venv: `pip install PyQt5`
+
 ### Settings file
 
 `settings.json` drives the simulation inputs that were previously hardcoded in the script:
@@ -155,5 +177,6 @@ Loop 2:  C – F – G – D    (ground segment C–D)
 settings.json        # Simulation inputs: payload, motor, masses, sweep
 motiongen_parser.py   # MotionGen → intermediate JSON → Python data structures
 sixbar_sim.py         # Kinematics, force analysis, plotting, animation
+sixbar_viewer.py      # Interactive desktop viewer (slider + synced charts)
 mechanism.json        # Intermediate JSON (generated, editable)
 ```
