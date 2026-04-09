@@ -5,10 +5,14 @@ Computes position/velocity kinematics, motor torque (virtual work),
 joint reaction forces (Newton-Euler), and produces plots/animation.
 
 Usage:
-    python sixbar_sim.py path/to/mechanism.motiongen
+    python sixbar_sim.py mechanism.json --settings settings.json
 """
 
-import sys
+import argparse
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import animation
@@ -62,6 +66,134 @@ def signed_angle(vertex, p1, p2):
     return da
 
 
+def _strip_json_comments(text: str) -> str:
+    """Remove // and /* */ comments from JSON-like text."""
+    result = []
+    i = 0
+    in_string = False
+    escape = False
+
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if in_string:
+            result.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if ch == '"':
+            in_string = True
+            result.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < len(text) and text[i] not in "\r\n":
+                i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < len(text) and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        result.append(ch)
+        i += 1
+
+    return "".join(result)
+
+
+DEFAULT_METRIC_LINK_MASSES = {
+    'L1': 0.045359,
+    'L3': 0.226796,
+    'L4': 0.090718,
+    'L5': 0.136078,
+    'L6': 0.068039,
+}
+
+
+@dataclass
+class SimulationSettings:
+    n_steps: int = 720
+    gravity: float | None = 9806.65
+    length_scale: float = 1.0
+    motor_speed_deg_per_s: float = 10.0
+    motor_torque_limit: float | None = 5000.0
+    payload_weight: float = 22.241108
+    payload_direction: list[float] = field(
+        default_factory=lambda: [0.0, -1.0]
+    )
+    link_masses: dict[str, float] = field(
+        default_factory=lambda: DEFAULT_METRIC_LINK_MASSES.copy()
+    )
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SimulationSettings":
+        payload = data.get('payload', {})
+        motor = data.get('motor', {})
+        settings = cls(
+            n_steps=data.get('n_steps', 720),
+            gravity=data.get('gravity', 9806.65),
+            length_scale=data.get('length_scale', 1.0),
+            motor_speed_deg_per_s=motor.get('speed_deg_per_s', 10.0),
+            motor_torque_limit=motor.get('torque_limit', 5000.0),
+            payload_weight=payload.get('weight', 22.241108),
+            payload_direction=payload.get('direction', [0.0, -1.0]),
+            link_masses=data.get(
+                'link_masses', DEFAULT_METRIC_LINK_MASSES.copy()
+            ),
+        )
+        if settings.length_scale <= 0:
+            raise ValueError("length_scale must be greater than 0")
+        return settings
+
+    @classmethod
+    def load_json(cls, filepath: str) -> "SimulationSettings":
+        with open(filepath) as f:
+            return cls.from_dict(json.loads(_strip_json_comments(f.read())))
+
+    def to_dict(self) -> dict:
+        return {
+            'n_steps': self.n_steps,
+            'gravity': self.gravity,
+            'length_scale': self.length_scale,
+            'motor': {
+                'speed_deg_per_s': self.motor_speed_deg_per_s,
+                'torque_limit': self.motor_torque_limit,
+            },
+            'payload': {
+                'weight': self.payload_weight,
+                'direction': self.payload_direction,
+            },
+            'link_masses': self.link_masses,
+        }
+
+    def payload_force(self) -> np.ndarray:
+        direction = np.asarray(self.payload_direction, dtype=float)
+        if direction.shape != (2,):
+            raise ValueError("payload.direction must be a 2-element vector")
+
+        magnitude = np.linalg.norm(direction)
+        if magnitude == 0.0 or self.payload_weight == 0.0:
+            return np.zeros(2)
+        return self.payload_weight * direction / magnitude
+
+    def cycle_time_s(self) -> float | None:
+        if self.motor_speed_deg_per_s == 0:
+            return None
+        return 360.0 / abs(self.motor_speed_deg_per_s)
+
+
 # ---------------------------------------------------------------------------
 # Main simulation class
 # ---------------------------------------------------------------------------
@@ -86,11 +218,12 @@ class SixBarSim:
     Connected via ternary link L5 (C – F – H).
     """
 
-    def __init__(self, input_file: str):
+    def __init__(self, input_file: str, length_scale: float = 1.0):
         if input_file.endswith(".json"):
             self.mech = Mechanism.load_json(input_file)
         else:
             self.mech = load_motiongen(input_file)
+        self.mech = self.mech.scaled(length_scale)
         self._extract_params()
 
     # ------------------------------------------------------------------
@@ -357,6 +490,24 @@ class SixBarSim:
             L4=self._cm_binary(vel['D'], vel['G']),
         )
 
+    def _force_unit(self):
+        unit = self.mech.linear_unit.lower()
+        return 'N' if unit in {'mm', 'cm', 'm'} else 'lbf'
+
+    def _torque_unit(self):
+        return f"{self._force_unit()}·{self.mech.linear_unit}"
+
+    def _default_gravity(self):
+        unit = self.mech.linear_unit.lower()
+        gravity_by_unit = {
+            'mm': 9806.65,
+            'cm': 980.665,
+            'm': 9.80665,
+            'in': 386.089,
+            'ft': 32.174,
+        }
+        return gravity_by_unit.get(unit, 9.80665)
+
     # ------------------------------------------------------------------
     # Motor torque  (principle of virtual work, quasi-static)
     # ------------------------------------------------------------------
@@ -520,7 +671,7 @@ class SixBarSim:
     # Full sweep
     # ------------------------------------------------------------------
 
-    def run(self, n_steps=360, link_masses=None, gravity=386.1,
+    def run(self, n_steps=360, link_masses=None, gravity=None,
             ext_force_E=None):
         """
         Sweep the crank through 360° and compute everything.
@@ -531,9 +682,10 @@ class SixBarSim:
             Angular resolution.
         link_masses : dict
             {'L1': mass, 'L3': mass, …}.  Defaults to 0 for missing links.
-        gravity : float
+        gravity : float or None
             Gravitational acceleration in consistent units
-            (386.1 in/s² for inches, 9810 mm/s² for mm).
+            for the mechanism's linear unit. Defaults to an inferred value
+            from `self.mech.linear_unit`.
         ext_force_E : array-like or None
             Constant external force [Fx, Fy] at the wheel/coupler point.
 
@@ -543,6 +695,8 @@ class SixBarSim:
         """
         if link_masses is None:
             link_masses = {}
+        if gravity is None:
+            gravity = self._default_gravity()
 
         theta_range = np.linspace(
             self.theta1_init,
@@ -601,6 +755,23 @@ class SixBarSim:
             joint_force_mag=joint_force_mag,
         )
 
+    def run_with_settings(self, settings: SimulationSettings):
+        gravity = settings.gravity
+        if gravity is None:
+            gravity = self._default_gravity()
+
+        results = self.run(
+            n_steps=settings.n_steps,
+            link_masses=settings.link_masses,
+            gravity=gravity,
+            ext_force_E=settings.payload_force(),
+        )
+        results['motor_speed_deg_per_s'] = settings.motor_speed_deg_per_s
+        results['motor_torque_limit'] = settings.motor_torque_limit
+        results['cycle_time_s'] = settings.cycle_time_s()
+        results['settings'] = settings.to_dict()
+        return results
+
     # ------------------------------------------------------------------
     # Plotting
     # ------------------------------------------------------------------
@@ -613,8 +784,14 @@ class SixBarSim:
         ax.plot(theta_deg, results['torque_ne'], '--', label='Newton-Euler',
                 alpha=0.7)
 
+        torque_limit = results.get('motor_torque_limit')
+        if torque_limit is not None:
+            ax.axhline(torque_limit, color='r', linestyle=':', alpha=0.8,
+                       label='Motor Limit')
+            ax.axhline(-torque_limit, color='r', linestyle=':', alpha=0.8)
+
         ax.set_xlabel('Crank Angle (°)')
-        ax.set_ylabel(f'Motor Torque ({self.mech.linear_unit}·lbf)')
+        ax.set_ylabel(f'Motor Torque ({self._torque_unit()})')
         ax.set_title(title)
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -630,7 +807,7 @@ class SixBarSim:
             ax.plot(theta_deg, mag, label=name)
 
         ax.set_xlabel('Crank Angle (°)')
-        ax.set_ylabel(f'Force Magnitude (lbf)')
+        ax.set_ylabel(f'Force Magnitude ({self._force_unit()})')
         ax.set_title(title)
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -690,10 +867,15 @@ class SixBarSim:
                         color=colours[name], **link_style)
 
         # Joints
+        points = np.array([pos[name] for name in 'ABCDEFGH'])
+        label_offset = max(np.ptp(points[:, 0]), np.ptp(points[:, 1])) * 0.015
+        label_offset = max(label_offset, 0.15)
+
         for name, p in pos.items():
             ax.plot(p[0], p[1], **joint_style)
-            offset = 0.15
-            ax.annotate(name, (p[0] + offset, p[1] + offset), fontsize=9)
+            ax.annotate(
+                name, (p[0] + label_offset, p[1] + label_offset), fontsize=9
+            )
 
         # Ground hatching
         for p in [B, C, D]:
@@ -716,7 +898,8 @@ class SixBarSim:
         all_pts = np.array([
             [p[k] for k in 'ABCDEFGH'] for p in positions
         ])  # shape (n, 8, 2)
-        margin = 1.0
+        span = max(np.ptp(all_pts[:, :, 0]), np.ptp(all_pts[:, :, 1]))
+        margin = max(span * 0.05, 1.0)
         xmin = all_pts[:, :, 0].min() - margin
         xmax = all_pts[:, :, 0].max() + margin
         ymin = all_pts[:, :, 1].min() - margin
@@ -800,35 +983,69 @@ class SixBarSim:
         return anim
 
 
+def _print_run_summary(sim: SixBarSim, results: dict) -> None:
+    finite_torque = results['torque_vw'][np.isfinite(results['torque_vw'])]
+    if finite_torque.size == 0:
+        print("No valid torque values were computed.")
+        return
+
+    peak_torque = float(np.max(np.abs(finite_torque)))
+    print(f"Peak motor torque: {peak_torque:.3f} {sim._torque_unit()}")
+
+    cycle_time = results.get('cycle_time_s')
+    if cycle_time is not None:
+        print(f"Cycle time at configured speed: {cycle_time:.3f} s")
+
+    torque_limit = results.get('motor_torque_limit')
+    if torque_limit is not None:
+        status = "OK" if peak_torque <= torque_limit else "EXCEEDS LIMIT"
+        print(
+            f"Motor torque limit: {torque_limit:.3f} {sim._torque_unit()} "
+            f"({status})"
+        )
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        'mechanism',
+        nargs='?',
+        default='mechanism.json',
+        help='Path to a .motiongen or mechanism .json file.',
+    )
+    parser.add_argument(
+        '-s', '--settings',
+        default='settings.json',
+        help='Path to the simulation settings JSON file.',
+    )
+    return parser
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    filepath = (sys.argv[1] if len(sys.argv) > 1
-                else '/home/marcus/Downloads/6bar.motiongen')
+    args = _build_arg_parser().parse_args()
+    settings_path = Path(args.settings)
+    if settings_path.exists():
+        settings = SimulationSettings.load_json(str(settings_path))
+        print(f"Loaded settings: {settings_path}")
+    else:
+        settings = SimulationSettings()
+        print(f"Settings file not found, using built-in defaults: {settings_path}")
 
-    sim = SixBarSim(filepath)
+    sim = SixBarSim(args.mechanism, length_scale=settings.length_scale)
     print(sim.mech.summary())
     print(f"\nInitial crank angle: {np.degrees(sim.theta1_init):.1f}°")
     print(f"Grashof check (Loop 1): "
           f"shortest + longest = {sim.L_BA + sim.L_CH:.4f}, "
           f"other two = {sim.L_AH + np.linalg.norm(sim.C - sim.B):.4f}")
+    if settings.length_scale != 1.0:
+        print(f"Applied length scale: {settings.length_scale:.6g}x")
 
-    # --- Example: run with some masses and a load at E ---
-    # Adjust these to your actual link masses (lbm) and load
-    masses = {
-        'L1': 0.1, 'L3': 0.5, 'L4': 0.2, 'L5': 0.3, 'L6': 0.15,
-    }
-    # Downward load at wheel point (e.g. half robot weight)
-    F_ext = np.array([0.0, -5.0])  # lbf
-
-    results = sim.run(
-        n_steps=720,
-        link_masses=masses,
-        gravity=386.1,        # in/s^2
-        ext_force_E=F_ext,
-    )
+    results = sim.run_with_settings(settings)
+    _print_run_summary(sim, results)
 
     # Plots
     sim.plot_torque(results)

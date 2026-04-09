@@ -44,29 +44,58 @@ python sixbar_sim.py mechanism.json
 
 # Or directly from a .motiongen file
 python sixbar_sim.py path/to/mechanism.motiongen
+
+# Use a custom settings file
+python sixbar_sim.py mechanism.json --settings path/to/settings.json
 ```
 
-This runs the simulation with placeholder masses and loads, generates plots, and displays them.
+This reads `settings.json` by default for masses, payload, motor limits, and other run settings, then generates plots and displays them.
+
+### Settings file
+
+`settings.json` drives the simulation inputs that were previously hardcoded in the script:
+
+- `length_scale` for uniformly scaling imported mechanism geometry
+- `payload.weight` and `payload.direction`
+- `motor.speed_deg_per_s` and `motor.torque_limit`
+- `link_masses`
+- `n_steps` and `gravity`
+
+The included default file is:
+
+```json
+{
+  "n_steps": 720,
+  "gravity": 9806.65,
+  "length_scale": 1.0,
+  "motor": {
+    "speed_deg_per_s": 10.0,
+    "torque_limit": 5000.0
+  },
+  "payload": {
+    "weight": 22.241108,
+    "direction": [0.0, -1.0]
+  },
+  "link_masses": {
+    "L1": 0.045359,
+    "L3": 0.226796,
+    "L4": 0.090718,
+    "L5": 0.136078,
+    "L6": 0.068039
+  }
+}
+```
 
 ### As a library
 
 ```python
-from sixbar_sim import SixBarSim
-import numpy as np
+from sixbar_sim import SixBarSim, SimulationSettings
 
 # Accepts either a .motiongen or .json file
-sim = SixBarSim("mechanism.json")
+settings = SimulationSettings.load_json("settings.json")
+sim = SixBarSim("mechanism.json", length_scale=settings.length_scale)
 
-# Define link masses (lbm) and external load at wheel point (lbf)
-masses = {"L1": 0.1, "L3": 0.5, "L4": 0.2, "L5": 0.3, "L6": 0.15}
-F_ext = np.array([0.0, -5.0])
-
-results = sim.run(
-    n_steps=720,
-    link_masses=masses,
-    gravity=386.1,        # in/s^2 (use 9810 for mm)
-    ext_force_E=F_ext,
-)
+results = sim.run_with_settings(settings)
 
 sim.plot_torque(results)
 sim.plot_joint_forces(results)
@@ -105,6 +134,7 @@ Loop 2:  C – F – G – D    (ground segment C–D)
 ## File structure
 
 ```
+settings.json        # Simulation inputs: payload, motor, masses, sweep
 motiongen_parser.py   # MotionGen → intermediate JSON → Python data structures
 sixbar_sim.py         # Kinematics, force analysis, plotting, animation
 mechanism.json        # Intermediate JSON (generated, editable)

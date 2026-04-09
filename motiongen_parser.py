@@ -56,6 +56,60 @@ class Mechanism:
     angular_unit: str
     ground_link_id: str | None
 
+    def scaled(self, linear_scale: float) -> "Mechanism":
+        """Return a copy with all linear geometry scaled uniformly."""
+        if linear_scale == 1.0:
+            return self
+
+        joints = {
+            jid: Joint(
+                id=j.id,
+                label=j.label,
+                x=j.x * linear_scale,
+                y=j.y * linear_scale,
+            )
+            for jid, j in self.joints.items()
+        }
+        links = {
+            lid: Link(
+                id=l.id,
+                label=l.label,
+                joint_ids=list(l.joint_ids),
+                is_ground=l.is_ground,
+            )
+            for lid, l in self.links.items()
+        }
+        actuators = [
+            Actuator(
+                id=a.id,
+                type=a.type,
+                at_joint_id=a.at_joint_id,
+                from_joint_id=a.from_joint_id,
+                to_joint_id=a.to_joint_id,
+                min_angle=a.min_angle,
+                max_angle=a.max_angle,
+                velocity=a.velocity,
+            )
+            for a in self.actuators
+        ]
+        link_lengths = [
+            LinkLength(
+                joint_a_id=ll.joint_a_id,
+                joint_b_id=ll.joint_b_id,
+                length=ll.length * linear_scale,
+            )
+            for ll in self.link_lengths
+        ]
+        return Mechanism(
+            joints=joints,
+            links=links,
+            actuators=actuators,
+            link_lengths=link_lengths,
+            linear_unit=self.linear_unit,
+            angular_unit=self.angular_unit,
+            ground_link_id=self.ground_link_id,
+        )
+
     def to_dict(self) -> dict:
         """Serialize the mechanism to a plain dict (JSON-ready)."""
         return {
