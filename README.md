@@ -51,6 +51,7 @@ python sixbar_sim.py mechanism.json --settings path/to/settings.json
 
 This reads `settings.json` by default for masses, payload, motor limits, and other run settings, then generates plots and displays them.
 The mechanism is converted to the configured output units even if the input `.motiongen` was authored in a different unit system.
+If `export.gif_path` is set in settings, the run also writes an animation GIF automatically.
 
 ### Interactive viewer
 
@@ -60,6 +61,9 @@ python sixbar_viewer.py mechanism.json
 
 # Works with .motiongen too, and still honors settings units conversion
 python sixbar_viewer.py path/to/mechanism.motiongen --settings settings.json
+
+# Headless GIF export (no GUI required)
+python sixbar_viewer.py mechanism.json --no-gui --export-gif linkage.gif
 ```
 
 The viewer includes:
@@ -68,6 +72,7 @@ The viewer includes:
 - Linkage motion panel with coupler trail
 - Synchronized cursors across torque, joint-force, and coupler charts
 - Play/Pause and playback speed control
+- Optional GIF export via `--export-gif` (or `settings.json` `export.gif_path`)
 
 If the viewer prints `Current backend: agg`, install a GUI backend first:
 
@@ -82,6 +87,7 @@ If the viewer prints `Current backend: agg`, install a GUI backend first:
 - `length_scale` for uniformly scaling imported mechanism geometry
 - `payload.mass_kg` and `payload.direction`
 - `motor.speed_deg_per_s` and `motor.torque_limit`
+- `export.gif_path` and `export.gif_fps`
 - `link_masses`
 - `n_steps`, `start_angle`, `end_angle`, and `gravity`
 
@@ -102,6 +108,10 @@ The included default file is:
   "motor": {
     "speed_deg_per_s": 10.0,
     "torque_limit": 5.0
+  },
+  "export": {
+    "gif_path": null,
+    "gif_fps": 30.0
   },
   "payload": {
     "mass_kg": 2.267962,

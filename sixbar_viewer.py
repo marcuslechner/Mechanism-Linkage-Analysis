@@ -207,6 +207,12 @@ class SixBarInteractiveViewer:
         if torque_limit is not None:
             self.ax_torque.axhline(torque_limit, color='r', linestyle=':', alpha=0.8, label='Motor Limit')
             self.ax_torque.axhline(-torque_limit, color='r', linestyle=':', alpha=0.8)
+        torque_nominal = self.results.get(
+            'motor_torque_nominal_display', self.results.get('motor_torque_nominal')
+        )
+        if torque_nominal is not None:
+            self.ax_torque.axhline(torque_nominal, color='orange', linestyle='--', alpha=0.8, label='Nominal')
+            self.ax_torque.axhline(-torque_nominal, color='orange', linestyle='--', alpha=0.8)
         self.torque_cursor = self.ax_torque.axvline(self.valid_angles[0], color='k', linewidth=1.5, alpha=0.8)
         self.ax_torque.set_ylabel(f'Torque ({self.torque_unit})')
         self.ax_torque.set_title('Motor Torque')
@@ -319,32 +325,24 @@ def _build_arg_parser():
         default='settings.json',
         help='Path to the simulation settings JSON file.',
     )
+    parser.add_argument(
+        '--export-gif',
+        help='Export an animation GIF to this path (must end with .gif).',
+    )
+    parser.add_argument(
+        '--gif-fps',
+        type=float,
+        help='GIF frame rate override (frames per second).',
+    )
+    parser.add_argument(
+        '--no-gui',
+        action='store_true',
+        help='Run without opening the interactive viewer window.',
+    )
     return parser
 
 
 if __name__ == '__main__':
-    _configure_interactive_backend()
-    active_backend = matplotlib.get_backend()
-    if _is_non_interactive_backend(active_backend):
-        qt_msg = (
-            "Qt bindings detected, but GUI cannot start in this headless session.\n"
-            if _has_qt_binding()
-            else ""
-        )
-        print(
-            "Interactive viewer needs a GUI Matplotlib backend.\n"
-            f"Current backend: {active_backend}\n"
-            f"{qt_msg}"
-            "Install one of:\n"
-            "  - python3-tk (TkAgg)\n"
-            "  - PyQt5/PyQt6/PySide6 (QtAgg)\n"
-            "And run from a desktop session (X11/Wayland), not headless.\n"
-            "Then rerun sixbar_viewer.py."
-        )
-        sys.exit(1)
-
-    import matplotlib.pyplot as plt  # noqa: PLW0603
-
     args = _build_arg_parser().parse_args()
     settings_path = Path(args.settings)
     if settings_path.exists():
@@ -361,5 +359,39 @@ if __name__ == '__main__':
         length_scale=settings.length_scale,
     )
     results = sim.run_with_settings(settings)
+
+    gif_path = args.export_gif or settings.export_gif_path
+    gif_fps = args.gif_fps if args.gif_fps is not None else settings.export_gif_fps
+    if gif_fps <= 0:
+        raise ValueError("GIF fps must be greater than 0")
+    if gif_path:
+        sim.animate(results, save_path=gif_path, fps=gif_fps)
+
+    if args.no_gui:
+        sys.exit(0)
+
+    _configure_interactive_backend()
+    active_backend = matplotlib.get_backend()
+    if _is_non_interactive_backend(active_backend):
+        qt_msg = (
+            "Qt bindings detected, but GUI cannot start in this headless session.\n"
+            if _has_qt_binding()
+            else ""
+        )
+        print(
+            "Interactive viewer needs a GUI Matplotlib backend.\n"
+            f"Current backend: {active_backend}\n"
+            f"{qt_msg}"
+            "Install one of:\n"
+            "  - python3-tk (TkAgg)\n"
+            "  - PyQt5/PyQt6/PySide6 (QtAgg)\n"
+            "And run from a desktop session (X11/Wayland), not headless.\n"
+            "Or use --no-gui --export-gif <path.gif> for headless export.\n"
+            "Then rerun sixbar_viewer.py."
+        )
+        sys.exit(1)
+
+    import matplotlib.pyplot as plt  # noqa: PLW0603
+
     viewer = SixBarInteractiveViewer(sim, settings, results)
     viewer.show()

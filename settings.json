@@ -32,13 +32,26 @@
     "speed_deg_per_s": 10.0,
 
     // Available motor torque in the configured units.torque.
-    "torque_limit": 5.0
+    "torque_limit": 10.0,
+
+    // Continuous (nominal) torque rating in the configured units.torque.
+    // Set to null to hide from plots.
+    "torque_nominal": 5.0
+  },
+
+  "export": {
+    // Optional GIF export path (must end with .gif).
+    // Set to null to disable auto-export.
+    "gif_path": null,
+
+    // GIF frame rate in frames per second.
+    "gif_fps": 30
   },
 
   "payload": {
     // Payload mass applied at point E, in kg.
     // Converted internally to force with: F = mass_kg * gravity.
-    "mass_kg": 10,
+    "mass_kg": 20,
 
     // Payload force direction as a 2D vector [x, y].
     // This is normalized by the code, so only direction matters here.

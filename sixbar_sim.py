@@ -185,6 +185,9 @@ class SimulationSettings:
     length_scale: float = 1.0
     motor_speed_deg_per_s: float = 10.0
     motor_torque_limit: float | None = 5000.0
+    motor_torque_nominal: float | None = None
+    export_gif_path: str | None = None
+    export_gif_fps: float = 30.0
     payload_mass_kg: float = 22.241108 / 9.80665
     payload_direction: list[float] = field(
         default_factory=lambda: [0.0, -1.0]
@@ -198,6 +201,7 @@ class SimulationSettings:
         payload = data.get('payload', {})
         motor = data.get('motor', {})
         units = data.get('units', {})
+        export = data.get('export', {})
         payload_mass_kg = payload.get('mass_kg')
         if payload_mass_kg is None:
             legacy_weight_n = payload.get('weight', 22.241108)
@@ -213,6 +217,9 @@ class SimulationSettings:
             length_scale=data.get('length_scale', 1.0),
             motor_speed_deg_per_s=motor.get('speed_deg_per_s', 10.0),
             motor_torque_limit=motor.get('torque_limit', 5000.0),
+            motor_torque_nominal=motor.get('torque_nominal'),
+            export_gif_path=export.get('gif_path'),
+            export_gif_fps=export.get('gif_fps', 30.0),
             payload_mass_kg=payload_mass_kg,
             payload_direction=payload.get('direction', [0.0, -1.0]),
             link_masses=data.get(
@@ -226,6 +233,12 @@ class SimulationSettings:
             raise ValueError(f"Unsupported length unit: {settings.length_unit}")
         settings.torque_unit = _normalize_torque_unit(settings.torque_unit)
         settings.angle_unit = _normalize_angle_unit(settings.angle_unit)
+        if settings.export_gif_fps <= 0:
+            raise ValueError("export.gif_fps must be greater than 0")
+        if settings.export_gif_path is not None and not isinstance(
+            settings.export_gif_path, str
+        ):
+            raise ValueError("export.gif_path must be a string path or null")
         return settings
 
     @classmethod
@@ -248,6 +261,11 @@ class SimulationSettings:
             'motor': {
                 'speed_deg_per_s': self.motor_speed_deg_per_s,
                 'torque_limit': self.motor_torque_limit,
+                'torque_nominal': self.motor_torque_nominal,
+            },
+            'export': {
+                'gif_path': self.export_gif_path,
+                'gif_fps': self.export_gif_fps,
             },
             'payload': {
                 'mass_kg': self.payload_mass_kg,
@@ -925,6 +943,8 @@ class SixBarSim:
             results['motor_torque_limit_native'] = (
                 settings.motor_torque_limit / torque_scale
             )
+        results['motor_torque_nominal'] = settings.motor_torque_nominal
+        results['motor_torque_nominal_display'] = settings.motor_torque_nominal
         results['cycle_time_s'] = settings.cycle_time_s()
         results['settings'] = settings.to_dict()
         return results
@@ -954,6 +974,15 @@ class SixBarSim:
             ax.axhline(torque_limit, color='r', linestyle=':', alpha=0.8,
                        label='Motor Limit')
             ax.axhline(-torque_limit, color='r', linestyle=':', alpha=0.8)
+
+        torque_nominal = results.get(
+            'motor_torque_nominal_display', results.get('motor_torque_nominal')
+        )
+        if torque_nominal is not None:
+            ax.axhline(torque_nominal, color='orange', linestyle='--',
+                       alpha=0.8, label='Nominal')
+            ax.axhline(-torque_nominal, color='orange', linestyle='--',
+                       alpha=0.8)
 
         ax.set_xlabel(f'Crank Angle ({self._angle_axis_label(angle_unit)})')
         ax.set_ylabel(
@@ -1058,97 +1087,223 @@ class SixBarSim:
         fig.tight_layout()
         return fig
 
-    def animate(self, results, interval=30, save_path=None):
-        """Animate the mechanism through the full sweep."""
-        positions = [p for p in results['positions'] if p is not None]
-        if not positions:
+    def animate(self, results, interval=30, save_path=None, fps=30):
+        """Animate the mechanism with synced torque, force, and coupler charts."""
+        valid_indices = [
+            i for i, p in enumerate(results['positions']) if p is not None
+        ]
+        if not valid_indices:
             print("No valid positions to animate.")
             return None
+        if fps <= 0:
+            raise ValueError("fps must be greater than 0")
 
-        # Compute axis limits
+        positions = results['positions']
+
+        # --- Axis data ---
+        angle_unit = results.get('angle_unit', 'deg')
+        theta_display = results.get(
+            'theta_display',
+            self._angle_values(
+                results['theta'] - self.theta1_init, angle_unit
+            ),
+        )
+        angle_label = self._angle_axis_label(angle_unit)
+        torque_vw = results.get('torque_vw_display', results['torque_vw'])
+        torque_ne = results.get('torque_ne_display', results['torque_ne'])
+        torque_unit = results.get('torque_unit', self._native_torque_unit())
+        force_unit = self._force_unit()
+        length_unit = self.mech.linear_unit
+
+        # --- Figure layout: linkage left, 3 charts right ---
+        fig = plt.figure(figsize=(16, 9))
+        gs = fig.add_gridspec(3, 2, width_ratios=[1.15, 1.0], hspace=0.38)
+        ax_link = fig.add_subplot(gs[:, 0])
+        ax_torque = fig.add_subplot(gs[0, 1])
+        ax_force = fig.add_subplot(gs[1, 1], sharex=ax_torque)
+        ax_coupler = fig.add_subplot(gs[2, 1], sharex=ax_torque)
+
+        # --- Linkage axes ---
         all_pts = np.array([
-            [p[k] for k in 'ABCDEFGH'] for p in positions
-        ])  # shape (n, 8, 2)
+            [positions[i][k] for k in 'ABCDEFGH'] for i in valid_indices
+        ])
         span = max(np.ptp(all_pts[:, :, 0]), np.ptp(all_pts[:, :, 1]))
         margin = max(span * 0.05, 1.0)
-        xmin = all_pts[:, :, 0].min() - margin
-        xmax = all_pts[:, :, 0].max() + margin
-        ymin = all_pts[:, :, 1].min() - margin
-        ymax = all_pts[:, :, 1].max() + margin
+        ax_link.set_xlim(
+            all_pts[:, :, 0].min() - margin,
+            all_pts[:, :, 0].max() + margin,
+        )
+        ax_link.set_ylim(
+            all_pts[:, :, 1].min() - margin,
+            all_pts[:, :, 1].max() + margin,
+        )
+        ax_link.set_aspect('equal')
+        ax_link.grid(True, alpha=0.3)
+        ax_link.set_title('Six-Bar Linkage')
 
-        fig, ax = plt.subplots(figsize=(7, 10))
-        ax.set_xlim(xmin, xmax)
-        ax.set_ylim(ymin, ymax)
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3)
-        ax.set_title('Six-Bar Linkage Animation')
+        seg_colors = [
+            'gray', 'gray',
+            '#e74c3c',
+            '#3498db',
+            '#2ecc71', '#2ecc71', '#2ecc71',
+            '#9b59b6', '#9b59b6', '#9b59b6',
+            '#e67e22',
+        ]
+        seg_defs = [
+            ('B', 'C'), ('C', 'D'),
+            ('B', 'A'),
+            ('A', 'H'),
+            ('C', 'H'), ('C', 'F'), ('H', 'F'),
+            ('F', 'G'), ('F', 'E'), ('G', 'E'),
+            ('D', 'G'),
+        ]
+        seg_lines = []
+        for color in seg_colors:
+            lw = 3 if color == 'gray' else 2.5
+            line, = ax_link.plot(
+                [], [], color=color, lw=lw, solid_capstyle='round',
+            )
+            seg_lines.append(line)
 
-        # Pre-create line objects
-        link_colours = ['gray', '#e74c3c', '#3498db', '#2ecc71',
-                        '#9b59b6', '#e67e22']
-        lines = [ax.plot([], [], lw=2.5, color=c)[0] for c in link_colours * 2]
-        joints_plot, = ax.plot([], [], 'ko', markersize=5, zorder=5)
-        coupler_trail, = ax.plot([], [], 'b-', linewidth=1, alpha=0.4)
-
+        joints_plot, = ax_link.plot([], [], 'ko', markersize=5, zorder=5)
+        coupler_trail, = ax_link.plot(
+            [], [], 'b-', linewidth=1.2, alpha=0.45,
+        )
+        label_texts = {
+            name: ax_link.text(0, 0, name, fontsize=9) for name in 'ABCDEFGH'
+        }
         trail_x, trail_y = [], []
 
-        def _segments(pos):
-            A, B, C, D = pos['A'], pos['B'], pos['C'], pos['D']
-            E, F, G, H = pos['E'], pos['F'], pos['G'], pos['H']
-            return [
-                (B, C), (C, D),           # ground
-                (B, A),                     # L1
-                (A, H),                     # L6
-                (C, H), (C, F), (H, F),    # L5
-                (F, G), (F, E), (G, E),    # L3
-                (D, G),                     # L4
-            ]
+        # --- Torque chart ---
+        ax_torque.plot(theta_display, torque_vw, label='Virtual Work')
+        ax_torque.plot(
+            theta_display, torque_ne, '--', label='Newton-Euler', alpha=0.7,
+        )
+        torque_limit = results.get(
+            'motor_torque_limit_display', results.get('motor_torque_limit'),
+        )
+        if torque_limit is not None:
+            ax_torque.axhline(
+                torque_limit, color='r', ls=':', alpha=0.8, label='Motor Limit',
+            )
+            ax_torque.axhline(-torque_limit, color='r', ls=':', alpha=0.8)
+        torque_nominal = results.get(
+            'motor_torque_nominal_display',
+            results.get('motor_torque_nominal'),
+        )
+        if torque_nominal is not None:
+            ax_torque.axhline(
+                torque_nominal, color='orange', ls='--', alpha=0.8,
+                label='Nominal',
+            )
+            ax_torque.axhline(
+                -torque_nominal, color='orange', ls='--', alpha=0.8,
+            )
+        torque_cursor = ax_torque.axvline(
+            theta_display[valid_indices[0]], color='k', lw=1.5, alpha=0.8,
+        )
+        ax_torque.set_ylabel(f'Torque ({torque_unit})')
+        ax_torque.set_title('Motor Torque')
+        ax_torque.grid(True, alpha=0.3)
+        ax_torque.legend(loc='best', fontsize=8)
 
-        # Ensure enough line objects
-        n_segs = 11
-        while len(lines) < n_segs:
-            lines.append(ax.plot([], [], lw=2, color='gray')[0])
+        # --- Joint forces chart ---
+        for name, mag in results['joint_force_mag'].items():
+            ax_force.plot(theta_display, mag, label=name)
+        force_cursor = ax_force.axvline(
+            theta_display[valid_indices[0]], color='k', lw=1.5, alpha=0.8,
+        )
+        ax_force.set_ylabel(f'Force ({force_unit})')
+        ax_force.set_title('Joint Reaction Forces')
+        ax_force.grid(True, alpha=0.3)
+        ax_force.legend(loc='best', fontsize=7, ncol=2)
 
-        seg_colors = ['gray', 'gray',
-                      '#e74c3c',
-                      '#3498db',
-                      '#2ecc71', '#2ecc71', '#2ecc71',
-                      '#9b59b6', '#9b59b6', '#9b59b6',
-                      '#e67e22']
+        # --- Coupler position chart ---
+        coupler_x = np.array([
+            positions[i]['E'][0] if positions[i] is not None else np.nan
+            for i in range(len(positions))
+        ])
+        coupler_y = np.array([
+            positions[i]['E'][1] if positions[i] is not None else np.nan
+            for i in range(len(positions))
+        ])
+        ax_coupler.plot(
+            theta_display, coupler_x, label=f'E.x ({length_unit})',
+        )
+        ax_coupler.plot(
+            theta_display, coupler_y, label=f'E.y ({length_unit})',
+        )
+        coupler_cursor = ax_coupler.axvline(
+            theta_display[valid_indices[0]], color='k', lw=1.5, alpha=0.8,
+        )
+        ax_coupler.set_xlabel(f'Crank Angle ({angle_label})')
+        ax_coupler.set_ylabel(f'Position ({length_unit})')
+        ax_coupler.set_title('Coupler Point E')
+        ax_coupler.grid(True, alpha=0.3)
+        ax_coupler.legend(loc='best', fontsize=8)
 
-        for i, c in enumerate(seg_colors):
-            lines[i].set_color(c)
-            lines[i].set_linewidth(2.5 if c != 'gray' else 3)
+        fig.subplots_adjust(
+            left=0.06, right=0.97, top=0.95, bottom=0.07,
+            wspace=0.28, hspace=0.38,
+        )
+
+        # --- Animation ---
+        all_artists = (
+            seg_lines + [joints_plot, coupler_trail]
+            + list(label_texts.values())
+            + [torque_cursor, force_cursor, coupler_cursor]
+        )
 
         def init():
-            for l in lines:
+            for l in seg_lines:
                 l.set_data([], [])
             joints_plot.set_data([], [])
             coupler_trail.set_data([], [])
-            return lines + [joints_plot, coupler_trail]
+            return all_artists
 
         def update(frame):
-            pos = positions[frame]
-            segs = _segments(pos)
-            for i, (p1, p2) in enumerate(segs):
-                lines[i].set_data([p1[0], p2[0]], [p1[1], p2[1]])
+            idx = valid_indices[frame]
+            pos = positions[idx]
+            angle = theta_display[idx]
 
+            # Update linkage segments
+            for line, (j1, j2) in zip(seg_lines, seg_defs):
+                p1, p2 = pos[j1], pos[j2]
+                line.set_data([p1[0], p2[0]], [p1[1], p2[1]])
+
+            # Joints
             pts = np.array([pos[k] for k in 'ABCDEFGH'])
             joints_plot.set_data(pts[:, 0], pts[:, 1])
+            offset = max(np.ptp(pts[:, 0]), np.ptp(pts[:, 1])) * 0.015
+            offset = max(offset, 0.15)
+            for name in 'ABCDEFGH':
+                p = pos[name]
+                label_texts[name].set_position(
+                    (p[0] + offset, p[1] + offset),
+                )
 
+            # Coupler trail
             trail_x.append(pos['E'][0])
             trail_y.append(pos['E'][1])
             coupler_trail.set_data(trail_x, trail_y)
 
-            return lines + [joints_plot, coupler_trail]
+            # Move cursors
+            for cursor in (torque_cursor, force_cursor, coupler_cursor):
+                cursor.set_xdata([angle, angle])
+
+            ax_link.set_title(f'Linkage @ {angle:.1f}{angle_label}')
+            return all_artists
 
         anim = animation.FuncAnimation(
             fig, update, init_func=init,
-            frames=len(positions), interval=interval, blit=True,
+            frames=len(valid_indices), interval=interval, blit=True,
         )
 
         if save_path:
-            anim.save(save_path, writer='pillow', fps=30)
+            save_path = str(save_path)
+            if not save_path.lower().endswith('.gif'):
+                raise ValueError("GIF export path must end with .gif")
+            anim.save(save_path, writer='pillow', fps=fps)
             print(f"Animation saved to {save_path}")
 
         return anim
@@ -1181,6 +1336,16 @@ def _print_run_summary(sim: SixBarSim, results: dict) -> None:
         print(
             f"Motor torque limit: {torque_limit:.3f} {torque_unit} "
             f"({status})"
+        )
+
+    torque_nominal = results.get(
+        'motor_torque_nominal_display', results.get('motor_torque_nominal')
+    )
+    if torque_nominal is not None:
+        nom_status = "OK" if peak_torque <= torque_nominal else "EXCEEDS NOMINAL"
+        print(
+            f"Motor torque nominal: {torque_nominal:.3f} {torque_unit} "
+            f"({nom_status})"
         )
 
 
@@ -1242,5 +1407,12 @@ if __name__ == '__main__':
     init_pos = sim.solve_position(sim.theta1_init)
     if init_pos:
         sim.plot_linkage(init_pos, title="Initial Configuration")
+
+    if settings.export_gif_path:
+        sim.animate(
+            results,
+            save_path=settings.export_gif_path,
+            fps=settings.export_gif_fps,
+        )
 
     plt.show()
