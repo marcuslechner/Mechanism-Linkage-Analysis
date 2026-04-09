@@ -12,7 +12,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import animation
-from motiongen_parser import load_motiongen
+from motiongen_parser import load_motiongen, Mechanism
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +86,11 @@ class SixBarSim:
     Connected via ternary link L5 (C – F – H).
     """
 
-    def __init__(self, motiongen_file: str):
-        self.mech = load_motiongen(motiongen_file)
+    def __init__(self, input_file: str):
+        if input_file.endswith(".json"):
+            self.mech = Mechanism.load_json(input_file)
+        else:
+            self.mech = load_motiongen(input_file)
         self._extract_params()
 
     # ------------------------------------------------------------------

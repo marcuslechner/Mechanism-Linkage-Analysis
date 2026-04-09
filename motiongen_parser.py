@@ -56,6 +56,80 @@ class Mechanism:
     angular_unit: str
     ground_link_id: str | None
 
+    def to_dict(self) -> dict:
+        """Serialize the mechanism to a plain dict (JSON-ready)."""
+        return {
+            "linear_unit": self.linear_unit,
+            "angular_unit": self.angular_unit,
+            "ground_link_id": self.ground_link_id,
+            "joints": {
+                jid: {"id": j.id, "label": j.label, "x": j.x, "y": j.y}
+                for jid, j in self.joints.items()
+            },
+            "links": {
+                lid: {
+                    "id": l.id,
+                    "label": l.label,
+                    "joint_ids": l.joint_ids,
+                    "is_ground": l.is_ground,
+                }
+                for lid, l in self.links.items()
+            },
+            "actuators": [
+                {
+                    "id": a.id,
+                    "type": a.type,
+                    "at_joint_id": a.at_joint_id,
+                    "from_joint_id": a.from_joint_id,
+                    "to_joint_id": a.to_joint_id,
+                    "min_angle": a.min_angle,
+                    "max_angle": a.max_angle,
+                    "velocity": a.velocity,
+                }
+                for a in self.actuators
+            ],
+            "link_lengths": [
+                {
+                    "joint_a_id": ll.joint_a_id,
+                    "joint_b_id": ll.joint_b_id,
+                    "length": ll.length,
+                }
+                for ll in self.link_lengths
+            ],
+        }
+
+    def save_json(self, filepath: str) -> None:
+        """Write the mechanism to a JSON file."""
+        with open(filepath, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Mechanism":
+        """Reconstruct a Mechanism from a plain dict (e.g. loaded from JSON)."""
+        joints = {
+            jid: Joint(**jdata) for jid, jdata in d["joints"].items()
+        }
+        links = {
+            lid: Link(**ldata) for lid, ldata in d["links"].items()
+        }
+        actuators = [Actuator(**a) for a in d["actuators"]]
+        link_lengths = [LinkLength(**ll) for ll in d["link_lengths"]]
+        return cls(
+            joints=joints,
+            links=links,
+            actuators=actuators,
+            link_lengths=link_lengths,
+            linear_unit=d["linear_unit"],
+            angular_unit=d["angular_unit"],
+            ground_link_id=d["ground_link_id"],
+        )
+
+    @classmethod
+    def load_json(cls, filepath: str) -> "Mechanism":
+        """Load a mechanism from a previously saved JSON file."""
+        with open(filepath) as f:
+            return cls.from_dict(json.load(f))
+
     def get_joint_by_label(self, label: str) -> Joint | None:
         for j in self.joints.values():
             if j.label == label:
@@ -191,7 +265,18 @@ def load_motiongen(filepath: str) -> Mechanism:
 
 
 if __name__ == "__main__":
-    import sys
-    filepath = sys.argv[1] if len(sys.argv) > 1 else "/home/marcus/Downloads/6bar.motiongen"
-    mech = load_motiongen(filepath)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Parse a .motiongen file")
+    parser.add_argument("input", nargs="?",
+                        default="/home/marcus/Downloads/6bar.motiongen",
+                        help=".motiongen input file")
+    parser.add_argument("-o", "--output", help="Write mechanism JSON to this file")
+    args = parser.parse_args()
+
+    mech = load_motiongen(args.input)
     print(mech.summary())
+
+    if args.output:
+        mech.save_json(args.output)
+        print(f"\nJSON written to {args.output}")
