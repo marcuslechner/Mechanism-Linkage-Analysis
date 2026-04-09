@@ -80,10 +80,10 @@ If the viewer prints `Current backend: agg`, install a GUI backend first:
 
 - `units.length`, `units.torque`, and `units.angle` for output units
 - `length_scale` for uniformly scaling imported mechanism geometry
-- `payload.weight` and `payload.direction`
+- `payload.mass_kg` and `payload.direction`
 - `motor.speed_deg_per_s` and `motor.torque_limit`
 - `link_masses`
-- `n_steps` and `gravity`
+- `n_steps`, `start_angle`, `end_angle`, and `gravity`
 
 The included default file is:
 
@@ -95,14 +95,16 @@ The included default file is:
     "angle": "deg"
   },
   "n_steps": 720,
-  "gravity": 9806.65,
+  "start_angle": null,
+  "end_angle": null,
+  "gravity": 9.80665,
   "length_scale": 1.0,
   "motor": {
     "speed_deg_per_s": 10.0,
     "torque_limit": 5.0
   },
   "payload": {
-    "weight": 22.241108,
+    "mass_kg": 2.267962,
     "direction": [0.0, -1.0]
   },
   "link_masses": {
@@ -114,6 +116,10 @@ The included default file is:
   }
 }
 ```
+
+`start_angle` and `end_angle` are in `units.angle`. Set both to simulate a partial sweep.
+
+For backward compatibility, `payload.weight` (in N) is still accepted if `payload.mass_kg` is omitted.
 
 Supported unit values:
 

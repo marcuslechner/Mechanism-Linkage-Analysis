@@ -176,14 +176,16 @@ def _normalize_angle_unit(unit: str) -> str:
 @dataclass
 class SimulationSettings:
     n_steps: int = 720
-    gravity: float | None = 9806.65
+    gravity: float | None = 9.80665
+    start_angle: float | None = None
+    end_angle: float | None = None
     length_unit: str = "mm"
     torque_unit: str = "N.m"
     angle_unit: str = "deg"
     length_scale: float = 1.0
     motor_speed_deg_per_s: float = 10.0
     motor_torque_limit: float | None = 5000.0
-    payload_weight: float = 22.241108
+    payload_mass_kg: float = 22.241108 / 9.80665
     payload_direction: list[float] = field(
         default_factory=lambda: [0.0, -1.0]
     )
@@ -196,16 +198,22 @@ class SimulationSettings:
         payload = data.get('payload', {})
         motor = data.get('motor', {})
         units = data.get('units', {})
+        payload_mass_kg = payload.get('mass_kg')
+        if payload_mass_kg is None:
+            legacy_weight_n = payload.get('weight', 22.241108)
+            payload_mass_kg = legacy_weight_n / 9.80665
         settings = cls(
             n_steps=data.get('n_steps', 720),
-            gravity=data.get('gravity', 9806.65),
+            gravity=data.get('gravity', 9.80665),
+            start_angle=data.get('start_angle'),
+            end_angle=data.get('end_angle'),
             length_unit=units.get('length', 'mm'),
             torque_unit=units.get('torque', 'N.m'),
             angle_unit=units.get('angle', 'deg'),
             length_scale=data.get('length_scale', 1.0),
             motor_speed_deg_per_s=motor.get('speed_deg_per_s', 10.0),
             motor_torque_limit=motor.get('torque_limit', 5000.0),
-            payload_weight=payload.get('weight', 22.241108),
+            payload_mass_kg=payload_mass_kg,
             payload_direction=payload.get('direction', [0.0, -1.0]),
             link_masses=data.get(
                 'link_masses', DEFAULT_METRIC_LINK_MASSES.copy()
@@ -229,6 +237,8 @@ class SimulationSettings:
         return {
             'n_steps': self.n_steps,
             'gravity': self.gravity,
+            'start_angle': self.start_angle,
+            'end_angle': self.end_angle,
             'units': {
                 'length': self.length_unit,
                 'torque': self.torque_unit,
@@ -240,21 +250,21 @@ class SimulationSettings:
                 'torque_limit': self.motor_torque_limit,
             },
             'payload': {
-                'weight': self.payload_weight,
+                'mass_kg': self.payload_mass_kg,
                 'direction': self.payload_direction,
             },
             'link_masses': self.link_masses,
         }
 
-    def payload_force(self) -> np.ndarray:
+    def payload_force(self, gravity: float) -> np.ndarray:
         direction = np.asarray(self.payload_direction, dtype=float)
         if direction.shape != (2,):
             raise ValueError("payload.direction must be a 2-element vector")
 
         magnitude = np.linalg.norm(direction)
-        if magnitude == 0.0 or self.payload_weight == 0.0:
+        if magnitude == 0.0 or self.payload_mass_kg == 0.0:
             return np.zeros(2)
-        return self.payload_weight * direction / magnitude
+        return (self.payload_mass_kg * gravity) * direction / magnitude
 
     def cycle_time_s(self) -> float | None:
         if self.motor_speed_deg_per_s == 0:
@@ -570,16 +580,16 @@ class SixBarSim:
         )
 
     def _force_unit(self):
-        unit = self.mech.linear_unit.lower()
-        return 'N' if unit in {'mm', 'cm', 'm'} else 'lbf'
+        # With mass in kg and payload in N, reaction forces are solved in N.
+        return 'N'
 
     def _native_torque_unit(self):
         return f"{self._force_unit()}·{self.mech.linear_unit}"
 
     def _native_torque_to_nm_factor(self):
-        force_factor = FORCE_UNIT_TO_N[self._force_unit()]
         length_factor = LINEAR_UNIT_TO_M[self.mech.linear_unit.lower()]
-        return force_factor * length_factor
+        # Native torque unit is N * (mechanism length unit).
+        return length_factor
 
     def _native_to_display_torque_scale(self, display_torque_unit: str):
         target_factor = TORQUE_UNIT_TO_NM[display_torque_unit]
@@ -592,21 +602,21 @@ class SixBarSim:
         return theta_rad
 
     @staticmethod
+    def _angle_to_radians(angle_value: float, angle_unit: str):
+        if angle_unit == 'deg':
+            return float(np.radians(angle_value))
+        return float(angle_value)
+
+    @staticmethod
     def _angle_axis_label(angle_unit: str):
         if angle_unit == 'deg':
             return '°'
         return 'rad'
 
     def _default_gravity(self):
-        unit = self.mech.linear_unit.lower()
-        gravity_by_unit = {
-            'mm': 9806.65,
-            'cm': 980.665,
-            'm': 9.80665,
-            'in': 386.089,
-            'ft': 32.174,
-        }
-        return gravity_by_unit.get(unit, 9.80665)
+        # SI gravity in m/s^2. Keeps mass(kg) and force(N) consistent
+        # regardless of geometry length unit.
+        return 9.80665
 
     # ------------------------------------------------------------------
     # Motor torque  (principle of virtual work, quasi-static)
@@ -771,8 +781,15 @@ class SixBarSim:
     # Full sweep
     # ------------------------------------------------------------------
 
-    def run(self, n_steps=360, link_masses=None, gravity=None,
-            ext_force_E=None):
+    def run(
+        self,
+        n_steps=360,
+        link_masses=None,
+        gravity=None,
+        ext_force_E=None,
+        theta_start=None,
+        theta_end=None,
+    ):
         """
         Sweep the crank through 360° and compute everything.
 
@@ -788,6 +805,10 @@ class SixBarSim:
             from `self.mech.linear_unit`.
         ext_force_E : array-like or None
             Constant external force [Fx, Fy] at the wheel/coupler point.
+        theta_start : float or None
+            Start crank angle in radians (absolute). Defaults to initial angle.
+        theta_end : float or None
+            End crank angle in radians (absolute). Defaults to start + 2*pi.
 
         Returns
         -------
@@ -797,10 +818,14 @@ class SixBarSim:
             link_masses = {}
         if gravity is None:
             gravity = self._default_gravity()
+        if theta_start is None:
+            theta_start = self.theta1_init
+        if theta_end is None:
+            theta_end = theta_start + 2 * np.pi
 
         theta_range = np.linspace(
-            self.theta1_init,
-            self.theta1_init + 2 * np.pi,
+            theta_start,
+            theta_end,
             n_steps,
             endpoint=False,
         )
@@ -859,12 +884,28 @@ class SixBarSim:
         gravity = settings.gravity
         if gravity is None:
             gravity = self._default_gravity()
+        if settings.start_angle is None and settings.end_angle is None:
+            theta_start = None
+            theta_end = None
+        elif settings.start_angle is None or settings.end_angle is None:
+            raise ValueError(
+                "Set both start_angle and end_angle, or leave both unset."
+            )
+        else:
+            theta_start = self._angle_to_radians(
+                settings.start_angle, settings.angle_unit
+            )
+            theta_end = self._angle_to_radians(
+                settings.end_angle, settings.angle_unit
+            )
 
         results = self.run(
             n_steps=settings.n_steps,
             link_masses=settings.link_masses,
             gravity=gravity,
-            ext_force_E=settings.payload_force(),
+            ext_force_E=settings.payload_force(gravity),
+            theta_start=theta_start,
+            theta_end=theta_end,
         )
         torque_scale = self._native_to_display_torque_scale(settings.torque_unit)
         results['torque_unit'] = settings.torque_unit
