@@ -50,11 +50,13 @@ python sixbar_sim.py mechanism.json --settings path/to/settings.json
 ```
 
 This reads `settings.json` by default for masses, payload, motor limits, and other run settings, then generates plots and displays them.
+The mechanism is converted to the configured output units even if the input `.motiongen` was authored in a different unit system.
 
 ### Settings file
 
 `settings.json` drives the simulation inputs that were previously hardcoded in the script:
 
+- `units.length`, `units.torque`, and `units.angle` for output units
 - `length_scale` for uniformly scaling imported mechanism geometry
 - `payload.weight` and `payload.direction`
 - `motor.speed_deg_per_s` and `motor.torque_limit`
@@ -65,12 +67,17 @@ The included default file is:
 
 ```json
 {
+  "units": {
+    "length": "mm",
+    "torque": "N.m",
+    "angle": "deg"
+  },
   "n_steps": 720,
   "gravity": 9806.65,
   "length_scale": 1.0,
   "motor": {
     "speed_deg_per_s": 10.0,
-    "torque_limit": 5000.0
+    "torque_limit": 5.0
   },
   "payload": {
     "weight": 22.241108,
@@ -86,6 +93,12 @@ The included default file is:
 }
 ```
 
+Supported unit values:
+
+- `units.length`: `mm`, `cm`, `m`, `in`, `ft`
+- `units.torque`: `N.m`, `N.mm`, `lbf.in`, `lbf.ft`
+- `units.angle`: `deg`, `rad`
+
 ### As a library
 
 ```python
@@ -93,7 +106,12 @@ from sixbar_sim import SixBarSim, SimulationSettings
 
 # Accepts either a .motiongen or .json file
 settings = SimulationSettings.load_json("settings.json")
-sim = SixBarSim("mechanism.json", length_scale=settings.length_scale)
+sim = SixBarSim(
+    "mechanism.json",
+    target_length_unit=settings.length_unit,
+    target_angle_unit=settings.angle_unit,
+    length_scale=settings.length_scale,
+)
 
 results = sim.run_with_settings(settings)
 

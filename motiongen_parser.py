@@ -10,6 +10,14 @@ import json
 import math
 from dataclasses import dataclass, field
 
+LINEAR_UNIT_TO_M = {
+    "mm": 1e-3,
+    "cm": 1e-2,
+    "m": 1.0,
+    "in": 0.0254,
+    "ft": 0.3048,
+}
+
 
 @dataclass
 class Joint:
@@ -109,6 +117,23 @@ class Mechanism:
             angular_unit=self.angular_unit,
             ground_link_id=self.ground_link_id,
         )
+
+    def to_linear_unit(self, target_unit: str) -> "Mechanism":
+        """Return a copy converted to *target_unit*."""
+        current = self.linear_unit.lower()
+        target = target_unit.lower()
+        if current == target:
+            return self
+
+        if current not in LINEAR_UNIT_TO_M:
+            raise ValueError(f"Unsupported source linear unit: {self.linear_unit}")
+        if target not in LINEAR_UNIT_TO_M:
+            raise ValueError(f"Unsupported target linear unit: {target_unit}")
+
+        scale = LINEAR_UNIT_TO_M[current] / LINEAR_UNIT_TO_M[target]
+        converted = self.scaled(scale)
+        converted.linear_unit = target
+        return converted
 
     def to_dict(self) -> dict:
         """Serialize the mechanism to a plain dict (JSON-ready)."""
