@@ -24,12 +24,20 @@
 
   // Multiplies all imported linear geometry from the mechanism file.
   // Example: 1.0 keeps the original size, 2.0 doubles all lengths.
-  // Must be greater than 0.
-  "length_scale": 1.0,
+  // Must be greater than 0. Ignored when autoscale.enabled is true.
+  "length_scale": 2.2,
+
+  // Automatic length scaling: solves point E's Y travel at scale 1.0 and
+  // picks length_scale so it matches target_delta_y (in units.length).
+  // When enabled, the value above is overridden.
+  "autoscale": {
+    "enabled": true,
+    "target_delta_y": 250
+  },
 
   "motor": {
     // Crank speed in degrees per second.
-    "speed_deg_per_s": 10.0,
+    "speed_deg_per_s": 5.0,
 
     // Available motor torque in the configured units.torque.
     "torque_limit": 10.0,
@@ -51,7 +59,7 @@
   "payload": {
     // Payload mass applied at point E, in kg.
     // Converted internally to force with: F = mass_kg * gravity.
-    "mass_kg": 20,
+    "mass_kg": 10,
 
     // Payload force direction as a 2D vector [x, y].
     // This is normalized by the code, so only direction matters here.

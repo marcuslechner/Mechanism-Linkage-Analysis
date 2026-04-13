@@ -183,6 +183,8 @@ class SimulationSettings:
     torque_unit: str = "N.m"
     angle_unit: str = "deg"
     length_scale: float = 1.0
+    autoscale: bool = False
+    autoscale_target_dy: float | None = None
     motor_speed_deg_per_s: float = 10.0
     motor_torque_limit: float | None = 5000.0
     motor_torque_nominal: float | None = None
@@ -202,6 +204,7 @@ class SimulationSettings:
         motor = data.get('motor', {})
         units = data.get('units', {})
         export = data.get('export', {})
+        autoscale_cfg = data.get('autoscale', {}) or {}
         payload_mass_kg = payload.get('mass_kg')
         if payload_mass_kg is None:
             legacy_weight_n = payload.get('weight', 22.241108)
@@ -215,6 +218,8 @@ class SimulationSettings:
             torque_unit=units.get('torque', 'N.m'),
             angle_unit=units.get('angle', 'deg'),
             length_scale=data.get('length_scale', 1.0),
+            autoscale=bool(autoscale_cfg.get('enabled', False)),
+            autoscale_target_dy=autoscale_cfg.get('target_delta_y'),
             motor_speed_deg_per_s=motor.get('speed_deg_per_s', 10.0),
             motor_torque_limit=motor.get('torque_limit', 5000.0),
             motor_torque_nominal=motor.get('torque_nominal'),
@@ -228,6 +233,13 @@ class SimulationSettings:
         )
         if settings.length_scale <= 0:
             raise ValueError("length_scale must be greater than 0")
+        if settings.autoscale:
+            if settings.autoscale_target_dy is None:
+                raise ValueError(
+                    "autoscale.target_delta_y is required when autoscale.enabled is true"
+                )
+            if settings.autoscale_target_dy <= 0:
+                raise ValueError("autoscale.target_delta_y must be greater than 0")
         settings.length_unit = settings.length_unit.lower()
         if settings.length_unit not in LINEAR_UNIT_TO_M:
             raise ValueError(f"Unsupported length unit: {settings.length_unit}")
@@ -258,6 +270,10 @@ class SimulationSettings:
                 'angle': self.angle_unit,
             },
             'length_scale': self.length_scale,
+            'autoscale': {
+                'enabled': self.autoscale,
+                'target_delta_y': self.autoscale_target_dy,
+            },
             'motor': {
                 'speed_deg_per_s': self.motor_speed_deg_per_s,
                 'torque_limit': self.motor_torque_limit,
@@ -798,6 +814,31 @@ class SixBarSim:
     # ------------------------------------------------------------------
     # Full sweep
     # ------------------------------------------------------------------
+
+    def measure_E_y_travel(self, n_steps, theta_start=None, theta_end=None):
+        """
+        Sweep the crank and return the peak-to-peak Y travel of point E,
+        in the sim's current linear unit. Only runs position kinematics —
+        no force/torque work.
+        """
+        if theta_start is None:
+            theta_start = self.theta1_init
+        if theta_end is None:
+            theta_end = theta_start + 2 * np.pi
+        thetas = np.linspace(theta_start, theta_end, n_steps, endpoint=False)
+        ys = []
+        prev = None
+        for th in thetas:
+            pos = self.solve_position(th, prev)
+            if pos is None:
+                continue
+            prev = pos
+            ys.append(pos['E'][1])
+        if not ys:
+            raise RuntimeError(
+                "Autoscale probe found no valid configurations across the sweep."
+            )
+        return float(max(ys) - min(ys))
 
     def run(
         self,
@@ -1379,9 +1420,42 @@ if __name__ == '__main__':
         settings = SimulationSettings()
         print(f"Settings file not found, using built-in defaults: {settings_path}")
 
+    if settings.start_angle is None and settings.end_angle is None:
+        theta_start_override = None
+        theta_end_override = None
+    elif settings.start_angle is None or settings.end_angle is None:
+        raise ValueError(
+            "Set both start_angle and end_angle, or leave both unset."
+        )
+    else:
+        theta_start_override = SixBarSim._angle_to_radians(
+            settings.start_angle, settings.angle_unit
+        )
+        theta_end_override = SixBarSim._angle_to_radians(
+            settings.end_angle, settings.angle_unit
+        )
+
+    effective_length_scale = settings.length_scale
+    if settings.autoscale:
+        probe = SixBarSim(
+            args.mechanism,
+            length_scale=1.0,
+            target_length_unit=settings.length_unit,
+            target_angle_unit=settings.angle_unit,
+        )
+        dy_unit = probe.measure_E_y_travel(
+            settings.n_steps, theta_start_override, theta_end_override
+        )
+        effective_length_scale = settings.autoscale_target_dy / dy_unit
+        print(
+            f"Autoscale: ΔY at scale 1.0 = {dy_unit:.4f} {settings.length_unit}, "
+            f"target = {settings.autoscale_target_dy:g} {settings.length_unit}, "
+            f"length_scale = {effective_length_scale:.6g}"
+        )
+
     sim = SixBarSim(
         args.mechanism,
-        length_scale=settings.length_scale,
+        length_scale=effective_length_scale,
         target_length_unit=settings.length_unit,
         target_angle_unit=settings.angle_unit,
     )
@@ -1392,8 +1466,8 @@ if __name__ == '__main__':
     print(f"Grashof check (Loop 1): "
           f"shortest + longest = {sim.L_BA + sim.L_CH:.4f}, "
           f"other two = {sim.L_AH + np.linalg.norm(sim.C - sim.B):.4f}")
-    if settings.length_scale != 1.0:
-        print(f"Applied length scale: {settings.length_scale:.6g}x")
+    if effective_length_scale != 1.0:
+        print(f"Applied length scale: {effective_length_scale:.6g}x")
 
     results = sim.run_with_settings(settings)
     _print_run_summary(sim, results)
