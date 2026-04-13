@@ -39,32 +39,22 @@ Edit `mechanism.json` in any text editor to adjust geometry, then run the simula
 ### Run the simulation
 
 ```bash
-# From the intermediate JSON (after tweaking)
+# Interactive linkage + synced charts (slider, play/pause, speed)
 python sixbar_sim.py mechanism.json
 
-# Or directly from a .motiongen file
+# Works directly from a .motiongen file too
 python sixbar_sim.py path/to/mechanism.motiongen
 
 # Use a custom settings file
 python sixbar_sim.py mechanism.json --settings path/to/settings.json
-```
-
-This reads `settings.json` by default for masses, payload, motor limits, and other run settings, then generates plots and displays them.
-The mechanism is converted to the configured output units even if the input `.motiongen` was authored in a different unit system.
-If `export.gif_path` is set in settings, the run also writes an animation GIF automatically.
-
-### Interactive viewer
-
-```bash
-# Interactive linkage + synced charts (slider, play/pause, speed)
-python sixbar_viewer.py mechanism.json
-
-# Works with .motiongen too, and still honors settings units conversion
-python sixbar_viewer.py path/to/mechanism.motiongen --settings settings.json
 
 # Headless GIF export (no GUI required)
-python sixbar_viewer.py mechanism.json --no-gui --export-gif linkage.gif
+python sixbar_sim.py mechanism.json --no-gui --export-gif linkage.gif
 ```
+
+This reads `settings.json` by default for masses, payload, motor limits, and other run settings, runs the full kinematics/dynamics, and opens an interactive viewer.
+The mechanism is converted to the configured output units even if the input `.motiongen` was authored in a different unit system.
+If `export.gif_path` is set in settings (or `--export-gif` is passed), the run also writes an animation GIF.
 
 The viewer includes:
 
@@ -74,7 +64,7 @@ The viewer includes:
 - Play/Pause and playback speed control
 - Optional GIF export via `--export-gif` (or `settings.json` `export.gif_path`)
 
-If the viewer prints `Current backend: agg`, install a GUI backend first:
+If the run prints `Current backend: agg`, install a GUI backend first:
 
 - Ubuntu/Debian: `sudo apt install python3-tk` (TkAgg)
 - Or install Qt bindings in your venv: `pip install PyQt5`
@@ -190,9 +180,8 @@ Loop 2:  C – F – G – D    (ground segment C–D)
 ## File structure
 
 ```
-settings.json        # Simulation inputs: payload, motor, masses, sweep
+settings.json         # Simulation inputs: payload, motor, masses, sweep
 motiongen_parser.py   # MotionGen → intermediate JSON → Python data structures
-sixbar_sim.py         # Kinematics, force analysis, plotting, animation
-sixbar_viewer.py      # Interactive desktop viewer (slider + synced charts)
+sixbar_sim.py         # Kinematics, force analysis, interactive viewer, GIF export
 mechanism.json        # Intermediate JSON (generated, editable)
 ```
