@@ -1685,7 +1685,8 @@ def _print_run_summary(sim: SixBarSim, results: dict) -> None:
         print("No valid torque values were computed.")
         return
 
-    peak_torque = float(np.max(np.abs(finite_torque)))
+    positive_torque = finite_torque[finite_torque > 0]
+    peak_torque = float(np.max(positive_torque)) if positive_torque.size else 0.0
     torque_unit = results.get('torque_unit', sim._native_torque_unit())
     print(f"Peak motor torque: {peak_torque:.3f} {torque_unit}")
 
@@ -1697,9 +1698,9 @@ def _print_run_summary(sim: SixBarSim, results: dict) -> None:
         'motor_torque_limit_display', results.get('motor_torque_limit')
     )
     if torque_limit is not None:
-        peak_native = float(
-            np.max(np.abs(results['torque_vw'][np.isfinite(results['torque_vw'])]))
-        )
+        native_vals = results['torque_vw'][np.isfinite(results['torque_vw'])]
+        positive_native = native_vals[native_vals > 0]
+        peak_native = float(np.max(positive_native)) if positive_native.size else 0.0
         limit_native = results.get('motor_torque_limit_native', torque_limit)
         status = "OK" if peak_native <= limit_native else "EXCEEDS LIMIT"
         print(
