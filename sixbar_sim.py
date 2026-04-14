@@ -1347,6 +1347,7 @@ class SixBarSim:
             save_path = str(save_path)
             if not save_path.lower().endswith('.gif'):
                 raise ValueError("GIF export path must end with .gif")
+            print(f"Processing GIF animation, please wait... ({save_path})", flush=True)
             anim.save(save_path, writer='pillow', fps=fps)
             print(f"Animation saved to {save_path}")
 
@@ -1455,7 +1456,21 @@ class SixBarInteractiveViewer:
 
         self.current_valid_pos = 0
         self.is_playing = False
-        self.base_interval_ms = 45
+        self.min_interval_ms = 10
+        self.frames_per_tick = 1
+
+        # Real-time base playback: at Speed x = 1.0 the viewer advances at
+        # settings.motor_speed_deg_per_s (degrees of crank per real second).
+        theta_rad = results['theta']
+        valid_theta_rad = theta_rad[self.valid_indices]
+        if valid_theta_rad.size >= 2:
+            step_deg = float(np.degrees(abs(valid_theta_rad[1] - valid_theta_rad[0])))
+        else:
+            step_deg = 1.0
+        crank_speed = max(abs(settings.motor_speed_deg_per_s), 1e-6)
+        self.base_interval_ms = max(
+            self.min_interval_ms, int(round(1000.0 * step_deg / crank_speed))
+        )
 
         self._build_figure()
         self._draw_static()
@@ -1493,13 +1508,14 @@ class SixBarInteractiveViewer:
             ax=self.ax_speed,
             label='Speed x',
             valmin=0.25,
-            valmax=4.0,
-            valinit=1.0,
+            valmax=15.0,
+            valinit=5.0,
         )
         self.speed_slider.on_changed(self._on_speed_changed)
 
         self.timer = self.fig.canvas.new_timer(interval=self.base_interval_ms)
         self.timer.add_callback(self._on_timer_tick)
+        self._on_speed_changed(self.speed_slider.val)
 
     def _draw_static(self):
         all_pts = np.array(
@@ -1605,13 +1621,20 @@ class SixBarInteractiveViewer:
             self.timer.stop()
 
     def _on_speed_changed(self, speed):
-        interval = max(10, int(self.base_interval_ms / speed))
-        self.timer.interval = interval
+        desired = self.base_interval_ms / max(speed, 1e-6)
+        if desired >= self.min_interval_ms:
+            self.frames_per_tick = 1
+            self.timer.interval = int(round(desired))
+        else:
+            self.frames_per_tick = max(1, int(round(self.min_interval_ms / desired)))
+            self.timer.interval = self.min_interval_ms
 
     def _on_timer_tick(self):
         if not self.is_playing:
             return
-        next_pos = (self.current_valid_pos + 1) % self.valid_indices.size
+        next_pos = (
+            self.current_valid_pos + self.frames_per_tick
+        ) % self.valid_indices.size
         next_angle = float(self.valid_angles[next_pos])
         self.angle_slider.set_val(next_angle)
 

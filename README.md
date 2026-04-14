@@ -71,53 +71,18 @@ If the run prints `Current backend: agg`, install a GUI backend first:
 
 ### Settings file
 
-`settings.json` drives the simulation inputs that were previously hardcoded in the script:
+`settings.json` drives the simulation inputs. See the file itself for inline comments on every field; the main knobs are:
 
-- `units.length`, `units.torque`, and `units.angle` for output units
-- `length_scale` for uniformly scaling imported mechanism geometry
-- `payload.mass_kg` and `payload.direction`
-- `motor.speed_deg_per_s` and `motor.torque_limit`
+- `units.length`, `units.torque`, `units.angle` — output/working units
+- `length_scale` — uniform scale applied to imported mechanism geometry
+- `autoscale.enabled` / `autoscale.target_delta_y` — when enabled, `length_scale` is computed automatically so point E's Y travel matches `target_delta_y` (in `units.length`); the static `length_scale` value above is overridden
+- `payload.mass_kg` and `payload.direction` — mass applied at point E (converted to force with `gravity`)
+- `motor.speed_deg_per_s`, `motor.torque_limit`, `motor.torque_nominal`
 - `export.gif_path` and `export.gif_fps`
-- `link_masses`
-- `n_steps`, `start_angle`, `end_angle`, and `gravity`
+- `link_masses` — per-link mass in kg
+- `n_steps`, `start_angle`, `end_angle`, `gravity`
 
-The included default file is:
-
-```json
-{
-  "units": {
-    "length": "mm",
-    "torque": "N.m",
-    "angle": "deg"
-  },
-  "n_steps": 720,
-  "start_angle": null,
-  "end_angle": null,
-  "gravity": 9.80665,
-  "length_scale": 1.0,
-  "motor": {
-    "speed_deg_per_s": 10.0,
-    "torque_limit": 5.0
-  },
-  "export": {
-    "gif_path": null,
-    "gif_fps": 30.0
-  },
-  "payload": {
-    "mass_kg": 2.267962,
-    "direction": [0.0, -1.0]
-  },
-  "link_masses": {
-    "L1": 0.045359,
-    "L3": 0.226796,
-    "L4": 0.090718,
-    "L5": 0.136078,
-    "L6": 0.068039
-  }
-}
-```
-
-`start_angle` and `end_angle` are in `units.angle`. Set both to simulate a partial sweep.
+`start_angle` and `end_angle` are in `units.angle`. Set both to simulate a partial sweep, or leave both `null` for a full rotation.
 
 For backward compatibility, `payload.weight` (in N) is still accepted if `payload.mass_kg` is omitted.
 
@@ -130,7 +95,7 @@ Supported unit values:
 ### As a library
 
 ```python
-from sixbar_sim import SixBarSim, SimulationSettings
+from sixbar_sim import SixBarSim, SimulationSettings, SixBarInteractiveViewer
 
 # Accepts either a .motiongen or .json file
 settings = SimulationSettings.load_json("settings.json")
@@ -143,11 +108,15 @@ sim = SixBarSim(
 
 results = sim.run_with_settings(settings)
 
-sim.plot_torque(results)
-sim.plot_joint_forces(results)
-sim.plot_coupler_curve(results)
+# Save a GIF
 sim.animate(results, save_path="linkage.gif")
+
+# Or open the interactive viewer
+viewer = SixBarInteractiveViewer(sim, settings, results)
+viewer.show()
 ```
+
+Note: when using the library directly, `autoscale` is not applied — set `length_scale` yourself, or mirror the autoscale block in `sixbar_sim.py`'s CLI entry point.
 
 ### MotionGen parser standalone
 

@@ -16,7 +16,7 @@
   // Optional sweep start/end crank angles in units.angle.
   // Set both to limit the range, or keep both null for full rotation.
   "start_angle": 0,
-  "end_angle": 300,
+  "end_angle": 360,
 
   // Gravitational acceleration in m/s^2.
   // With mass in kg and payload force in N, keep this in SI units.
@@ -37,7 +37,7 @@
 
   "motor": {
     // Crank speed in degrees per second.
-    "speed_deg_per_s": 5.0,
+    "speed_deg_per_s": 100,
 
     // Available motor torque in the configured units.torque.
     "torque_limit": 10.0,
