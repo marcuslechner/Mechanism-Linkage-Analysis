@@ -1,0 +1,6 @@
+pydy
+sympy
+numpy
+scipy
+matplotlib
+fpdf2

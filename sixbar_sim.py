@@ -1758,6 +1758,12 @@ def _export_dimensions_md(
     L_BC = np.linalg.norm(sim.C - sim.B)
     L_CD = np.linalg.norm(sim.D - sim.C)
     L_BD = np.linalg.norm(sim.D - sim.B)
+    angle_unit = settings.angle_unit
+    def to_angle(rad):
+        return np.degrees(rad) if angle_unit == 'deg' else rad
+    angle_label = angle_unit
+    ang_BC = to_angle(np.arctan2(sim.C[1] - sim.B[1], sim.C[0] - sim.B[0]))
+    ang_CD = to_angle(np.arctan2(sim.D[1] - sim.C[1], sim.D[0] - sim.C[0]))
 
     def f(v):
         return f"{v:.2f}"
@@ -1792,11 +1798,11 @@ def _export_dimensions_md(
         "",
         "L2 is fixed; use these to locate the motor axis (B) and the two idler pivots (C, D).",
         "",
-        f"| From | To | Distance ({unit}) |",
-        "|---|---|---|",
-        f"| B | C | {f(L_BC)} |",
-        f"| C | D | {f(L_CD)} |",
-        f"| B | D | {f(L_BD)} |",
+        f"| From | To | Distance ({unit}) | Angle from horizontal ({angle_label}) |",
+        "|---|---|---|---|",
+        f"| B | C | {f(L_BC)} | {f(ang_BC)} |",
+        f"| C | D | {f(L_CD)} | {f(ang_CD)} |",
+        f"| B | D | {f(L_BD)} | — |",
         "",
         "## Joint topology reference",
         "",
