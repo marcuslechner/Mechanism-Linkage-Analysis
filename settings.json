@@ -1,0 +1,77 @@
+{
+  "units": {
+    // Output/working length unit. Mechanism geometry is converted to this.
+    "length": "mm",
+
+    // Output torque unit for plots/summary/limits.
+    "torque": "N.m",
+
+    // Output angle unit for plots/summary.
+    "angle": "deg"
+  },
+
+  // Number of crank-angle samples across one full 360 deg sweep.
+  "n_steps": 720,
+
+  // Optional sweep start/end crank angles in units.angle.
+  // Set both to limit the range, or keep both null for full rotation.
+  "start_angle": 0,
+  "end_angle": 360,
+
+  // Gravitational acceleration in m/s^2.
+  // With mass in kg and payload force in N, keep this in SI units.
+  "gravity": 9.80665,
+
+  // Multiplies all imported linear geometry from the mechanism file.
+  // Example: 1.0 keeps the original size, 2.0 doubles all lengths.
+  // Must be greater than 0. Ignored when autoscale.enabled is true.
+  "length_scale": 2.2,
+
+  // Automatic length scaling: solves point E's Y travel at scale 1.0 and
+  // picks length_scale so it matches target_delta_y (in units.length).
+  // When enabled, the value above is overridden.
+  "autoscale": {
+    "enabled": true,
+    "target_delta_y": 250
+  },
+
+  "motor": {
+    // Crank speed in degrees per second.
+    "speed_deg_per_s": 100,
+
+    // Available motor torque in the configured units.torque.
+    "torque_limit": 10.0,
+
+    // Continuous (nominal) torque rating in the configured units.torque.
+    // Set to null to hide from plots.
+    "torque_nominal": 5.0
+  },
+
+  "export": {
+    // Optional GIF export path (must end with .gif).
+    // Set to null to disable auto-export.
+    "gif_path": null,
+
+    // GIF frame rate in frames per second.
+    "gif_fps": 30
+  },
+
+  "payload": {
+    // Payload mass applied at point E, in kg.
+    // Converted internally to force with: F = mass_kg * gravity.
+    "mass_kg": 10,
+
+    // Payload force direction as a 2D vector [x, y].
+    // This is normalized by the code, so only direction matters here.
+    "direction": [0.0, 1.0]
+  },
+
+  "link_masses": {
+    // Link masses in kg.
+    "L1": 0.00045359,
+    "L3": 0.00226796,
+    "L4": 0.00090718,
+    "L5": 0.00136078,
+    "L6": 0.00068039
+  }
+}
