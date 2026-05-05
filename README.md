@@ -2,6 +2,8 @@
 
 Quasi-static kinematic and force analysis for a Stephenson six-bar leg linkage. Loads mechanism geometry from [MotionGen](https://motiongen.io/) export files or from an intermediate JSON format that can be hand-edited.
 
+![Linkage animation](assets/linkage.gif)
+
 ## What it computes
 
 - **Position kinematics** — all joint positions vs crank angle (loop-closure via circle-circle intersection)
