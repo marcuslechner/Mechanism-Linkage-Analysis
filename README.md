@@ -4,6 +4,10 @@ Quasi-static kinematic and force analysis for a Stephenson six-bar leg linkage. 
 
 ![Linkage animation](assets/linkage.gif)
 
+## Physical Build
+
+![Physical leg linkage](assets/Physical%20Build.gif)
+
 ## What it computes
 
 - **Position kinematics** — all joint positions vs crank angle (loop-closure via circle-circle intersection)
